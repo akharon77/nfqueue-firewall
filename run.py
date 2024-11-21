@@ -1,9 +1,15 @@
 from netfilterqueue import NetfilterQueue
 from scapy.all import *
+import argparse
 import socket
 import enum
 import sys
 import os
+
+class Answer(enum.Enum):
+    accept = 0
+    drop = 1
+    skip = 2
 
 class DnsRule:
     def __init__(self, rtype, dtype, target, val):
@@ -15,16 +21,17 @@ class DnsRule:
         self.val = val
         
     def check(self, pkt):
-        if pkt.haslayer(self.dtype):
-            dns_data = pkt[self.dtype]
-        else:
-            return True
+        print("[CHECK_RULE]", self.rtype, self.dtype, self.target, self.val)
 
         if self.dtype == "DNSRR":
             assert(self.target in ["rrname", "type", "rdata"])
         else:
             assert(self.target in ["qname", "qtype"])
 
+        if not pkt.haslayer(self.dtype):
+            return Answer.skip
+
+        dns_data = pkt[self.dtype]
         target_val = eval(f"dns_data.{self.target}")
         if self.target not in ["type", "qtype"]:
             target_val = target_val.decode('ascii')
@@ -32,9 +39,11 @@ class DnsRule:
             assert(self.val.isdigit())
             target_val = str(target_val)
         res = (target_val == self.val)
-        if self.rtype == "DENY":
-            res = not res
-        return res
+        if res:
+            if self.rtype == "ACCEPT":
+                return Answer.accept
+            return Answer.drop
+        return Answer.skip
 
 def read_config(filename):
     rules = []
@@ -49,18 +58,43 @@ def read_config(filename):
     return rules
 
 def main():
-    rules = read_config(sys.argv[1])
-    queue_num = int(sys.argv[2])
+    parser = argparse.ArgumentParser(prog='nfqueue-filter')
+    parser.add_argument('config')
+    parser.add_argument('--queue-num', type=int, default=1)
+    parser.add_argument('--default-action', default="accept")
+    args = parser.parse_args()
+
+    rules = read_config(args.config)
+    queue_num = int(args.queue_num)
+    assert(args.default_action in ['accept', 'drop'])
+    default_action = Answer.accept if args.default_action == 'accept' else Answer.drop
+
     def callback(pkt):
         data = pkt.get_payload()
         scppkt = IP(data)
-        if scppkt.haslayer(DNS):
-            if all(rule.check(scppkt) for rule in rules):
-                pkt.accept()
-            else:
-                pkt.drop()
-        else:
+        if not scppkt.haslayer(DNS):
             pkt.accept()
+            return
+
+        print("[DNS_DATA]", scppkt[DNS])
+
+        flag = True
+        ans = Answer.skip
+        for rule in rules:
+            ans = rule.check(scppkt)
+            if ans == Answer.skip:
+                continue
+            else:
+                flag = False
+                break
+        if flag:
+            print("[DEFAULT]", end=' ')
+            ans = default_action
+        print("[ANS]", ans)
+        if ans == Answer.accept:
+            pkt.accept()
+        else:
+            pkt.drop()
 
     nfqueue = NetfilterQueue()
     nfqueue.bind(queue_num, callback)
