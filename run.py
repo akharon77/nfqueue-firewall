@@ -13,7 +13,7 @@ class Answer(enum.Enum):
 
 class DnsRule:
     def __init__(self, rtype, dtype, target, val):
-        assert(rtype in ["ACCEPT", "DENY"])
+        assert(rtype in ["ACCEPT", "DROP"])
         assert(dtype in ["DNSQR", "DNSRR"])
         self.rtype = rtype
         self.dtype = dtype
