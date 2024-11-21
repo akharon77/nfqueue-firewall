@@ -22,14 +22,15 @@ class DnsRule:
 
         if self.dtype == "DNSRR":
             assert(self.target in ["rrname", "type", "rdata"])
-            if self.target == "type":
-                assert(isinstance(self.target, int))
         else:
             assert(self.target in ["qname", "qtype"])
-            if self.target == "qtype":
-                assert(isinstance(self.target, int))
 
-        target_val = eval(f"dns_data.{self.target}").decode('ascii')
+        target_val = eval(f"dns_data.{self.target}")
+        if self.target not in ["type", "qtype"]:
+            target_val = target_val.decode('ascii')
+        else:
+            assert(self.val.isdigit())
+            target_val = str(target_val)
         res = (target_val == self.val)
         if self.rtype == "DENY":
             res = not res
